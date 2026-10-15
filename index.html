@@ -1,0 +1,992 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Helicon Plasma Thruster Simulator</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Three.js & OrbitControls -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <style>
+        body {
+            background-color: #030712;
+            color: #f3f4f6;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            user-select: none;
+        }
+        #three-canvas-container {
+            width: 100vw;
+            height: 100vh;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 0;
+            cursor: grab;
+            pointer-events: auto; 
+        }
+        #three-canvas-container:active { cursor: grabbing; }
+        
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.82);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+        }
+        .glass-badge {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.5); }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+        .component-label {
+            position: absolute;
+            transform: translate(-50%, -100%);
+            pointer-events: none;
+            transition: opacity 0.2s ease, transform 0.1s ease-out;
+            white-space: nowrap;
+        }
+        .label-paper {
+            background: #ffffff;
+            color: #000000;
+            border: 1px solid #94a3b8;
+            border-radius: 2px;
+            box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.4);
+            font-family: 'Arial', sans-serif;
+            font-weight: 800;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+        }
+        
+        .measure-paper {
+            background: #fef08a;
+            color: #854d0e;
+            border: 1px solid #ca8a04;
+            border-radius: 2px;
+            box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.5);
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+        }
+
+        .cinematic-bar {
+            position: absolute;
+            left: 0;
+            width: 100%;
+            height: 12vh;
+            background: #000;
+            z-index: 40;
+            transition: transform 1s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .cinematic-bar.top { top: 0; transform: translateY(-100%); }
+        .cinematic-bar.bottom { bottom: 0; transform: translateY(100%); display: flex; align-items: center; justify-content: center; }
+        .cinematic-bar.active { transform: translateY(0); }
+    </style>
+</head>
+<body>
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const LABELS_CONFIG = [
+            { id: 'gasSource', text: 'Gas Source', pos: [-6.0, 1.8, 0] },
+            { id: 'mag1', text: 'Helicon Magnet', pos: [2.0, 5.8, 0] },
+            { id: 'ant1', text: 'Helicon Antenna', pos: [6.5, 5.5, 0] },
+            { id: 'mag2', text: 'Helicon Magnet', pos: [11.0, 5.8, 0] },
+            { id: 'tube1', text: 'Plasma Tube', pos: [14.0, 4.8, 0] },
+            { id: 'mag3', text: 'ICRH Magnet', pos: [17.0, 7.5, 0] },
+            { id: 'ant2', text: 'ICRH Antenna', pos: [21.5, 5.5, 0] },
+            { id: 'mag4', text: 'ICRH Magnet', pos: [26.0, 7.5, 0] },
+            { id: 'tube2', text: 'Source Tube', pos: [29.0, 4.8, 0] },
+            { id: 'nozzle', text: 'Expansion Nozzle', pos: [33.5, 9.5, 0] },
+            { id: 'ps1', text: 'Magnet Power Supply 1', pos: [2.0, -8.0, 4] },
+            { id: 'mn1', text: 'Matching Network 1', pos: [6.5, -9.0, 4] },
+            { id: 'rf1', text: 'RF Generator 1', pos: [11.0, -9.2, 4] },
+            { id: 'ps2', text: 'Magnet Power Supply 2', pos: [16.0, -8.0, 4] },
+            { id: 'mn2', text: 'Matching Network 2', pos: [20.5, -9.0, 4] },
+            { id: 'rf2', text: 'RF Generator 2', pos: [25.0, -9.2, 4] }
+        ];
+
+        const IPR_MEASUREMENTS = [
+            { id: 'm_tube', text: 'Quartz Tube: 1.6m L x 0.05m ID', pos: [13.0, 3.2, 0] },
+            { id: 'm_ant', text: 'Antenna: 0.18m L x 0.074m OD', pos: [6.5, 7.8, 0] },
+            { id: 'm_cham', text: 'Expansion Chamber: 0.8m L x 0.42m ID', pos: [35.5, 4.0, 0] },
+            { id: 'm_total', text: 'Total Operational Footprint: > 2.4m Length', pos: [15.0, -4.5, 0] }
+        ];
+
+        const TOUR_STEPS = [
+            { t: 0,  cam: [-15, 12, 45], tg: [15, -2, 0], msg: "Welcome to the 2-Stage Helicon Plasma Thruster.", mode: 'flow', hp: 0, ip: 0, speed: 1.0 },
+            { t: 4,  cam: [-10, 2, 20],  tg: [-2, -2, 0], msg: "Propellant gas is injected from the source into the quartz plasma tube.", hp: 0, ip: 0, speed: 1.0 },
+            { t: 9,  cam: [2, 4, 18],    tg: [6.5, 0, 0], msg: "Helicon Stage: RF Generator & Matching Network power the Helicon Antenna.", hp: 4.5, ip: 0, speed: 1.0 },
+            { t: 14, cam: [10, 2, 12],   tg: [10, 0, 0],  msg: "The RF energy ionizes the gas, creating a dense, low-temperature plasma.", hp: 4.5, ip: 0, speed: 1.0 },
+            { t: 19, cam: [17, 4, 18],   tg: [21.5, 0, 0],msg: "ICRH Stage: The second system injects ICRH power to heat the ions.", hp: 4.5, ip: 4.5, speed: 1.0 },
+            { t: 24, cam: [24, 2, 12],   tg: [24, 0, 0],  msg: "Notice the ion gyro-radii expand rapidly as they absorb perpendicular energy (Slow Motion).", mode: 'focus', hp: 4.5, ip: 4.5, speed: 0.2 },
+            { t: 32, cam: [40, 8, 25],   tg: [32, 0, 0],  msg: "The Magnetic Nozzle converts this rotational energy into directed axial exhaust velocity.", hp: 4.5, ip: 4.5, speed: 0.5 },
+            { t: 38, cam: [-15, 12, 45], tg: [15, -2, 0], msg: "Simulation complete.", mode: 'flow', hp: 2.5, ip: 3.0, speed: 1.0 },
+            { t: 42, end: true }
+        ];
+
+        // PHYSICS CONFIGURATION: Atomic Mass & Velocity Multipliers based on empirical data
+        const GAS_CONFIG = {
+    Argon: { n: 0x38bdf8, nEm: 0x0284c7, i: 0xf43f5e, iEm: 0xd946ef, mass: 40, velMult: 38 },  // Caps ~76 km/s at max ICRH
+    Krypton: { n: 0x86efac, nEm: 0x16a34a, i: 0xa855f7, iEm: 0x7e22ce, mass: 84, velMult: 14 }, // Caps ~28 km/s at max ICRH
+    Xenon: { n: 0x93c5fd, nEm: 0x2563eb, i: 0x22d3ee, iEm: 0x0891b2, mass: 131, velMult: 9 }    // Caps ~18 km/s at max ICRH
+};
+
+        const App = () => {
+            const [isMenuOpen, setIsMenuOpen] = useState(true);
+            const [simMode, setSimMode] = useState('flow'); 
+            const [moleculeCount, setMoleculeCount] = useState(35);
+            const [simSpeed, setSimSpeed] = useState(1.0);
+            const [gasType, setGasType] = useState('Argon');
+            
+            const [dragMode, setDragMode] = useState('rotate'); 
+
+            const [heliconPower, setHeliconPower] = useState(2.5); 
+            const [icrhPower, setIcrhPower] = useState(3.0); 
+            
+            const [hMag1, setHMag1] = useState(500);
+            const [hMag2, setHMag2] = useState(500);
+            const [icrhMag1, setIcrhMag1] = useState(650);
+            const [icrhMag2, setIcrhMag2] = useState(650);
+            const [nozzleField, setNozzleField] = useState(800);
+
+            const [showFieldLines, setShowFieldLines] = useState(true);
+            const [showLabels, setShowLabels] = useState(true);
+            const [showTrajectories, setShowTrajectories] = useState(false);
+            const [showInsideView, setShowInsideView] = useState(true); 
+            const [showMeasurements, setShowMeasurements] = useState(false); 
+            const [isPlaying, setIsPlaying] = useState(true);
+            const [activeTab, setActiveTab] = useState('controls'); 
+
+            const [isTourActive, setIsTourActive] = useState(false);
+            const [tourMessage, setTourMessage] = useState("");
+            const [isRecording, setIsRecording] = useState(false);
+
+            const [screenLabels, setScreenLabels] = useState([]);
+            const [screenMeasurements, setScreenMeasurements] = useState([]);
+            const [telemetry, setTelemetry] = useState({ activeIons: 0, activeNeutrals: 0, exhaustVel: 0, isp: 0 });
+
+            const mountRef = useRef(null);
+            const sceneRef = useRef(null);
+            const cameraRef = useRef(null);
+            const controlsRef = useRef(null);
+            const particlesRef = useRef([]); 
+            const fieldLinesGroupRef = useRef(null);
+            const coilsRef = useRef([]); 
+            const rendererRef = useRef(null);
+            
+            const cutawayChamberRef = useRef(null);
+            const fullSolidChamberRef = useRef(null);
+            const fullGlassChamberRef = useRef(null);
+            const cutawayNozzleRef = useRef(null);
+            const fullSolidNozzleRef = useRef(null);
+            const fullGlassNozzleRef = useRef(null);
+
+            const mediaRecorderRef = useRef(null);
+            const recordedChunksRef = useRef([]);
+            const tourStateRef = useRef({ active: false, startTime: 0 });
+            
+            const simParams = useRef({
+                moleculeCount: 35, simSpeed: 1.0, gasType: 'Argon', heliconPower: 2.5, icrhPower: 3.0, 
+                hMag1: 500, hMag2: 500, icrhMag1: 650, icrhMag2: 650, nozzleField: 800,
+                showFieldLines: true, showTrajectories: false, isPlaying: true, showInsideView: true, showMeasurements: false
+            });
+            
+            useEffect(() => {
+                simParams.current = {
+                    moleculeCount, simSpeed, gasType, heliconPower, icrhPower, hMag1, hMag2, icrhMag1, icrhMag2, nozzleField,
+                    showFieldLines, showTrajectories, isPlaying, showInsideView, showMeasurements
+                };
+            }, [moleculeCount, simSpeed, gasType, heliconPower, icrhPower, hMag1, hMag2, icrhMag1, icrhMag2, nozzleField, showFieldLines, showTrajectories, isPlaying, showInsideView, showMeasurements]);
+
+            useEffect(() => {
+                if (controlsRef.current) {
+                    const ctrl = controlsRef.current;
+                    if (dragMode === 'rotate') {
+                        ctrl.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+                        ctrl.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+                    } else {
+                        ctrl.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+                        ctrl.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE };
+                    }
+                }
+            }, [dragMode]);
+
+            const setCameraView = (view) => {
+                const cam = cameraRef.current;
+                const ctrl = controlsRef.current;
+                if(!cam || !ctrl) return;
+                
+                switch(view) {
+                    case 'intake': cam.position.set(-8, 5, 20); ctrl.target.set(-3, 0, 0); break;
+                    case 'stage1': cam.position.set(6.5, 8, 20); ctrl.target.set(6.5, 0, 0); break;
+                    case 'stage2': cam.position.set(21.5, 8, 20); ctrl.target.set(21.5, 0, 0); break;
+                    case 'nozzle': cam.position.set(45, 5, 25); ctrl.target.set(35, 0, 0); break;
+                    case 'full':
+                    default: cam.position.set(-15, 12, 45); ctrl.target.set(15, -2, 0); break;
+                }
+                ctrl.update();
+            };
+
+            const handleReset = () => {
+                setSimMode('flow'); setMoleculeCount(35); setSimSpeed(1.0); setGasType('Argon');
+                setDragMode('rotate'); setHeliconPower(2.5); setIcrhPower(3.0);
+                setHMag1(500); setHMag2(500); setIcrhMag1(650); setIcrhMag2(650); setNozzleField(800);
+                setShowFieldLines(true); setShowLabels(true); setShowTrajectories(false); 
+                setShowInsideView(true); setShowMeasurements(false); setIsPlaying(true);
+                setIsTourActive(false); tourStateRef.current.active = false;
+                setCameraView('full');
+            };
+
+            const startTour = () => {
+                handleReset(); setIsTourActive(true);
+                tourStateRef.current = { active: true, startTime: performance.now() };
+            };
+
+            const toggleRecording = () => {
+                if (isRecording) {
+                    mediaRecorderRef.current.stop(); setIsRecording(false);
+                } else {
+                    const stream = rendererRef.current.domElement.captureStream(30); 
+                    try {
+                        const recorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
+                        recordedChunksRef.current = [];
+                        recorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunksRef.current.push(e.data); };
+                        recorder.onstop = () => {
+                            const url = URL.createObjectURL(new Blob(recordedChunksRef.current, { type: 'video/webm' }));
+                            const a = document.createElement('a'); a.style.display = 'none'; a.href = url; a.download = 'helicon_thruster_sim.webm';
+                            document.body.appendChild(a); a.click(); window.URL.revokeObjectURL(url);
+                        };
+                        recorder.start(); mediaRecorderRef.current = recorder; setIsRecording(true);
+                    } catch (e) { alert("MediaRecorder not supported in this browser for canvas capture."); }
+                }
+            };
+
+            useEffect(() => {
+                const mount = mountRef.current;
+                const width = window.innerWidth;
+                const height = window.innerHeight;
+
+                const scene = new THREE.Scene();
+                scene.fog = new THREE.FogExp2(0x030712, 0.012);
+                sceneRef.current = scene;
+
+                const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+                camera.position.set(-15, 12, 45);
+                cameraRef.current = camera;
+
+                const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true }); 
+                renderer.setSize(width, height);
+                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                mount.appendChild(renderer.domElement);
+                rendererRef.current = renderer;
+
+                const controls = new THREE.OrbitControls(camera, renderer.domElement);
+                controls.enableDamping = true; controls.dampingFactor = 0.05;
+                controls.target.set(15, -2, 0); 
+                controls.enablePan = true;
+                controls.screenSpacePanning = true; 
+                controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+                controlsRef.current = controls;
+
+                scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+                const dirLight = new THREE.DirectionalLight(0xffffff, 1.0); dirLight.position.set(10, 30, 20); scene.add(dirLight);
+                const dirLight2 = new THREE.DirectionalLight(0x94a3b8, 0.5); dirLight2.position.set(-20, 10, -20); scene.add(dirLight2);
+
+                const heliconLight = new THREE.PointLight(0xd946ef, 2, 20); heliconLight.position.set(6.5, 0, 0); scene.add(heliconLight);
+                const icrhLight = new THREE.PointLight(0xf97316, 2, 25); icrhLight.position.set(21.5, 0, 0); scene.add(icrhLight);
+                const nozzleLight = new THREE.PointLight(0x38bdf8, 2.5, 30); nozzleLight.position.set(32, 0, 0); scene.add(nozzleLight);
+
+                const thrusterGroup = new THREE.Group();
+                scene.add(thrusterGroup);
+
+                const baseMesh = new THREE.Mesh(new THREE.BoxGeometry(50, 0.5, 18), new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.9 }));
+                baseMesh.position.set(15, -11.25, 0); scene.add(baseMesh);
+
+                [3.0, 14.0, 25.0].forEach(x => {
+                    const legMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.8 });
+                    const leg = new THREE.Mesh(new THREE.BoxGeometry(1.5, 6, 2), legMat); leg.position.set(x, -7.5, 0);
+                    const bracket = new THREE.Mesh(new THREE.BoxGeometry(3, 1, 3), legMat); bracket.position.set(x, -4.5, 0);
+                    thrusterGroup.add(leg); thrusterGroup.add(bracket);
+                });
+
+                const glassMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, transparent: true, opacity: 0.15, roughness: 0.2, metalness: 0.3, side: THREE.DoubleSide, depthWrite: false });
+                const fullGlassGeom = new THREE.CylinderGeometry(4.0, 4.0, 31, 32, 1, true); fullGlassGeom.rotateZ(Math.PI / 2); fullGlassGeom.translate(15.5, 0, 0);
+                const glassChamber = new THREE.Mesh(fullGlassGeom, glassMat);
+                fullGlassChamberRef.current = glassChamber;
+                thrusterGroup.add(glassChamber);
+
+                const casingMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.6, roughness: 0.4, side: THREE.DoubleSide });
+                const cutawayGeom = new THREE.CylinderGeometry(4.05, 4.05, 31, 32, 1, true, Math.PI / 2, Math.PI); cutawayGeom.rotateZ(Math.PI / 2); cutawayGeom.translate(15.5, 0, 0);
+                const cutawayChamber = new THREE.Mesh(cutawayGeom, casingMat);
+                cutawayChamberRef.current = cutawayChamber;
+                thrusterGroup.add(cutawayChamber);
+
+                const fullSolidGeom = new THREE.CylinderGeometry(4.05, 4.05, 31, 32); fullSolidGeom.rotateZ(Math.PI / 2); fullSolidGeom.translate(15.5, 0, 0);
+                const fullSolidChamber = new THREE.Mesh(fullSolidGeom, casingMat);
+                fullSolidChamber.visible = false;
+                fullSolidChamberRef.current = fullSolidChamber;
+                thrusterGroup.add(fullSolidChamber);
+
+                const gasGroup = new THREE.Group();
+                const tank = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 8, 32), new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.6 })); tank.position.set(-6, -6, 0);
+                const valve = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 1.5, 16), new THREE.MeshStandardMaterial({ color: 0x475569 })); valve.position.set(-6, -1.5, 0);
+                const pipeGeom = new THREE.CylinderGeometry(0.3, 0.3, 6, 16); pipeGeom.rotateZ(Math.PI / 2);
+                const pipe = new THREE.Mesh(pipeGeom, new THREE.MeshStandardMaterial({ color: 0x22c55e })); pipe.position.set(-3, -1, 0);
+                gasGroup.add(tank); gasGroup.add(valve); gasGroup.add(pipe);
+                thrusterGroup.add(gasGroup);
+
+                const createEquipmentBox = (w, h, d, x, y, z, colorHex, isGreen) => {
+                    const group = new THREE.Group();
+                    const box = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.7 })); group.add(box);
+                    const screenW = isGreen ? w * 0.7 : w * 0.4; const screenH = isGreen ? h * 0.15 : h * 0.3;
+                    const screen = new THREE.Mesh(new THREE.PlaneGeometry(screenW, screenH), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+                    screen.position.set(isGreen ? 0 : -w/4, isGreen ? h/3 : 0, d/2 + 0.01);
+                    const light = new THREE.Mesh(new THREE.PlaneGeometry(screenW*0.6, screenH*0.4), new THREE.MeshBasicMaterial({ color: 0x38bdf8 }));
+                    light.position.set(isGreen ? 0 : -w/4, isGreen ? h/3 : 0, d/2 + 0.02);
+                    group.add(screen); group.add(light); group.position.set(x, y, z); return group;
+                };
+
+                const createWire = (startX, startY, endX, endY, color) => {
+                    const path = new THREE.CatmullRomCurve3([ new THREE.Vector3(startX, startY, 4), new THREE.Vector3(startX, startY + 2, 4), new THREE.Vector3(endX, startY + 2, 4), new THREE.Vector3(endX, endY, 0) ]);
+                    return new THREE.Mesh(new THREE.TubeGeometry(path, 20, 0.1, 8, false), new THREE.MeshStandardMaterial({ color: color, roughness: 0.5, metalness: 0.5 }));
+                };
+
+                thrusterGroup.add(createEquipmentBox(1.5, 3.5, 2.0, 2.0, -9.25, 4, 0x86efac, true)); 
+                thrusterGroup.add(createEquipmentBox(3.0, 1.5, 2.0, 6.5, -10.25, 4, 0xfef3c7, false)); 
+                thrusterGroup.add(createEquipmentBox(2.5, 1.2, 2.0, 11.0, -10.4, 4, 0x3b82f6, false)); 
+                thrusterGroup.add(createWire(6.5, -9.5, 6.5, 0, 0xb45309)); 
+                thrusterGroup.add(createWire(2.0, -7.5, 2.0, 0, 0xef4444)); 
+
+                thrusterGroup.add(createEquipmentBox(1.5, 3.5, 2.0, 16.0, -9.25, 4, 0x86efac, true)); 
+                thrusterGroup.add(createEquipmentBox(3.0, 1.5, 2.0, 20.5, -10.25, 4, 0xfef3c7, false)); 
+                thrusterGroup.add(createEquipmentBox(2.5, 1.2, 2.0, 25.0, -10.4, 4, 0x3b82f6, false)); 
+                thrusterGroup.add(createWire(20.5, -9.5, 21.5, 0, 0xb45309)); 
+                thrusterGroup.add(createWire(16.0, -7.5, 17.0, 0, 0xef4444)); 
+
+                const createMagnetCoil = (xPos, index, innerRadius, coilThickness, caseRadius, caseThickness) => {
+                    const group = new THREE.Group();
+                    const casing = new THREE.Mesh(new THREE.TorusGeometry(caseRadius, caseThickness, 16, 64), new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.4 }));
+                    casing.rotateY(Math.PI / 2); group.add(casing);
+                    const coilMat = new THREE.MeshStandardMaterial({ color: 0xb45309, emissive: 0xf59e0b, emissiveIntensity: 0.2, metalness: 0.7 });
+                    const coil = new THREE.Mesh(new THREE.TorusGeometry(innerRadius, coilThickness, 16, 64), coilMat);
+                    coil.rotateY(Math.PI / 2); group.add(coil);
+                    coilsRef.current[index] = coil; group.position.set(xPos, 0, 0); return group;
+                };
+
+                thrusterGroup.add(createMagnetCoil(2.0, 0, 4.4, 0.4, 4.9, 0.6));
+                thrusterGroup.add(createMagnetCoil(11.0, 1, 4.4, 0.4, 4.9, 0.6));
+                thrusterGroup.add(createMagnetCoil(17.0, 2, 5.2, 0.8, 6.0, 1.2));
+                thrusterGroup.add(createMagnetCoil(26.0, 3, 5.2, 0.8, 6.0, 1.2));
+
+                const antMat = new THREE.MeshStandardMaterial({ color: 0xb45309, metalness: 0.8 });
+                class HeliconHelix extends THREE.Curve {
+                    constructor(offset) { super(); this.offset = offset; }
+                    getPoint(t, optionalTarget = new THREE.Vector3()) { return optionalTarget.set(this.offset + t * 5.0, 4.3 * Math.cos(t * Math.PI * 7), 4.3 * Math.sin(t * Math.PI * 7)); }
+                }
+                thrusterGroup.add(new THREE.Mesh(new THREE.TubeGeometry(new HeliconHelix(4.0), 120, 0.35, 16, false), antMat));
+                thrusterGroup.add(new THREE.Mesh(new THREE.TubeGeometry(new HeliconHelix(19.0), 120, 0.35, 16, false), antMat));
+
+                const nozzleGroup = new THREE.Group();
+                const coneGeom = new THREE.CylinderGeometry(9.0, 4.05, 8.0, 32, 1, true, Math.PI / 2, Math.PI); coneGeom.rotateZ(-Math.PI / 2);
+                const cutawayNozzle = new THREE.Mesh(coneGeom, casingMat).translateX(35.0);
+                cutawayNozzleRef.current = cutawayNozzle;
+                nozzleGroup.add(cutawayNozzle);
+
+                const coneFullSolidGeom = new THREE.CylinderGeometry(9.0, 4.05, 8.0, 32, 1, false); coneFullSolidGeom.rotateZ(-Math.PI / 2);
+                const fullSolidNozzle = new THREE.Mesh(coneFullSolidGeom, casingMat).translateX(35.0);
+                fullSolidNozzle.visible = false;
+                fullSolidNozzleRef.current = fullSolidNozzle;
+                nozzleGroup.add(fullSolidNozzle);
+
+                const coneFullGlassGeom = new THREE.CylinderGeometry(9.0, 4.0, 8.0, 32, 1, true); coneFullGlassGeom.rotateZ(-Math.PI / 2);
+                const fullGlassNozzle = new THREE.Mesh(coneFullGlassGeom, glassMat).translateX(35.0);
+                fullGlassNozzleRef.current = fullGlassNozzle;
+                nozzleGroup.add(fullGlassNozzle);
+
+                thrusterGroup.add(nozzleGroup);
+
+
+                const fieldLinesGroup = new THREE.Group();
+                fieldLinesGroupRef.current = fieldLinesGroup;
+                thrusterGroup.add(fieldLinesGroup);
+
+                let lastFieldBuildState = "";
+                const buildFieldLines = () => {
+                    while (fieldLinesGroup.children.length > 0) {
+                        const child = fieldLinesGroup.children[0];
+                        fieldLinesGroup.remove(child);
+                        if (child.geometry) child.geometry.dispose();
+                    }
+                    const params = simParams.current;
+                    const globalMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.35, side: THREE.DoubleSide });
+
+                    for (let i = 0; i < 14; i++) {
+                        const angle = (i / 14) * Math.PI * 2;
+                        const points = [];
+                        for (let x = -4; x <= 46; x += 1.0) {
+                            const bH1 = params.hMag1 / (1 + Math.pow((x - 2.0) / 3, 2));
+                            const bH2 = params.hMag2 / (1 + Math.pow((x - 11.0) / 3, 2));
+                            const bI1 = params.icrhMag1 / (1 + Math.pow((x - 17.0) / 3, 2));
+                            const bI2 = params.icrhMag2 / (1 + Math.pow((x - 26.0) / 3, 2));
+                            const bN  = params.nozzleField / (1 + Math.pow((x - 30.0) / 4, 2));
+                            
+                            let r = 3.6 * Math.sqrt(600 / Math.max(100, bH1 + bH2 + bI1 + bI2 + bN));
+                            if (x > 30) r += Math.pow(x - 30, 1.25) * (0.12 + (1000 - params.nozzleField) * 0.00015);
+                            else if (x < 0) r += Math.pow(-x, 1.1) * 0.1; 
+                            points.push(new THREE.Vector3(x, r * Math.cos(angle), r * Math.sin(angle)));
+                        }
+                        fieldLinesGroup.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), points.length * 2, 0.12, 6, false), globalMat));
+                    }
+
+                    const buildLocalCoilFields = (xPos, strength, colorHex, baseRadius) => {
+                        if (strength <= 100) return;
+                        const numLoops = 8;
+                        const localMat = new THREE.MeshBasicMaterial({ color: colorHex, transparent: true, opacity: 0.4, side: THREE.DoubleSide });
+                        for(let i=0; i<numLoops; i++) {
+                            const angle = (i/numLoops) * Math.PI * 2;
+                            const cx = xPos;
+                            const cy = baseRadius * Math.cos(angle);
+                            const cz = baseRadius * Math.sin(angle);
+                            const points = [];
+                            for(let j=0; j<=24; j++) {
+                                const t = (j/24) * Math.PI * 2;
+                                const r = 0.8 + (strength / 1000) * 1.5; 
+                                const px = cx + r * Math.cos(t);
+                                const py = cy + r * Math.sin(t) * Math.cos(angle);
+                                const pz = cz + r * Math.sin(t) * Math.sin(angle);
+                                points.push(new THREE.Vector3(px, py, pz));
+                            }
+                            fieldLinesGroup.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 24, 0.06, 4, true), localMat));
+                        }
+                    };
+
+                    buildLocalCoilFields(2.0, params.hMag1, 0x60a5fa, 4.4);
+                    buildLocalCoilFields(11.0, params.hMag2, 0x60a5fa, 4.4);
+                    buildLocalCoilFields(17.0, params.icrhMag1, 0x818cf8, 5.2);
+                    buildLocalCoilFields(26.0, params.icrhMag2, 0x818cf8, 5.2);
+                };
+                buildFieldLines();
+
+                // PARTICLES & TRAILS (Highly Optimized BufferGeometry)
+                const sharedNeutralGeo = new THREE.SphereGeometry(0.32, 16, 16);
+                const sharedIonGeo = new THREE.SphereGeometry(0.38, 16, 16);
+                const sharedElecGeo = new THREE.SphereGeometry(0.12, 12, 12);
+                const sharedElecMat = new THREE.MeshBasicMaterial({ color: 0xfef08a });
+
+                const TRAIL_LENGTH = 2500; 
+
+                const createParticleObject = (type, x, y, z, gColor) => {
+                    const pGroup = new THREE.Group();
+                    let mainMesh;
+                    
+                    if (type === 0) {
+                        mainMesh = new THREE.Mesh(sharedNeutralGeo, new THREE.MeshStandardMaterial({ color: gColor.n, transparent: true, opacity: 0.75, emissive: gColor.nEm }));
+                    } else {
+                        mainMesh = new THREE.Mesh(sharedIonGeo, new THREE.MeshStandardMaterial({ color: gColor.i, emissive: gColor.iEm, emissiveIntensity: 0.9 }));
+                        const eMesh = new THREE.Mesh(sharedElecGeo, sharedElecMat);
+                        eMesh.position.set(0.6, 0, 0); pGroup.add(eMesh); pGroup.userData.electronMesh = eMesh;
+                    }
+                    pGroup.add(mainMesh); pGroup.position.set(x, y, z);
+
+                    const ionTrailGeo = new THREE.BufferGeometry();
+                    ionTrailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL_LENGTH * 3), 3));
+                    const ionTrailMesh = new THREE.Line(ionTrailGeo, new THREE.LineBasicMaterial({ color: gColor.i, transparent: true, opacity: 0.7 }));
+                    ionTrailMesh.frustumCulled = false;
+
+                    const elecTrailGeo = new THREE.BufferGeometry();
+                    elecTrailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL_LENGTH * 3), 3));
+                    const elecTrailMesh = new THREE.Line(elecTrailGeo, new THREE.LineBasicMaterial({ color: 0xfef08a, transparent: true, opacity: 0.5 }));
+                    elecTrailMesh.frustumCulled = false;
+
+                    scene.add(ionTrailMesh); scene.add(elecTrailMesh);
+
+                    const massFactor = Math.sqrt(40 / gColor.mass); // Inversely proportional to sqrt of mass
+
+                    pGroup.userData = {
+                        type, 
+                        vx: (0.08 + Math.random() * 0.04) * massFactor, 
+                        vy: (Math.random() - 0.5) * 0.02, 
+                        vz: (Math.random() - 0.5) * 0.02,
+                        phase: Math.random() * Math.PI * 2, gyroRadius: 0.2 + Math.random() * 0.1, gyroSpeed: 0.15 + Math.random() * 0.05,
+                        ionTrailMesh, elecTrailMesh, 
+                        iPos: new Float32Array(TRAIL_LENGTH * 3), ePos: new Float32Array(TRAIL_LENGTH * 3), 
+                        tIdx: 0, tCount: 0
+                    };
+                    return pGroup;
+                };
+
+                const syncParticlesWithCount = (targetCount, gColor) => {
+                    const currentParticles = particlesRef.current;
+                    while (currentParticles.length < targetCount) {
+                        const pObj = createParticleObject(0, -3.0 + (Math.random() - 0.5) * 1.5, (Math.random() - 0.5) * 2.0, (Math.random() - 0.5) * 2.0, gColor);
+                        scene.add(pObj); currentParticles.push(pObj);
+                    }
+                    while (currentParticles.length > targetCount) {
+                        const pObj = currentParticles.pop();
+                        scene.remove(pObj); scene.remove(pObj.userData.ionTrailMesh); scene.remove(pObj.userData.elecTrailMesh);
+                        if (pObj.children[0].geometry && pObj.children[0].geometry !== sharedNeutralGeo && pObj.children[0].geometry !== sharedIonGeo) {
+                            pObj.children[0].geometry.dispose();
+                        }
+                    }
+                };
+
+                const updateTrail = (data, px, py, pz, ex, ey, ez, show) => {
+                    const idx = data.tIdx;
+                    data.iPos[idx*3] = px; data.iPos[idx*3+1] = py; data.iPos[idx*3+2] = pz;
+                    if(ex !== null) { data.ePos[idx*3] = ex; data.ePos[idx*3+1] = ey; data.ePos[idx*3+2] = ez; }
+                    
+                    data.tIdx = (idx + 1) % TRAIL_LENGTH; 
+                    data.tCount = Math.min(data.tCount + 1, TRAIL_LENGTH);
+
+                    if (show && data.tCount > 1) {
+                        data.ionTrailMesh.visible = true; data.elecTrailMesh.visible = (ex !== null);
+                        
+                        const iPosAttr = data.ionTrailMesh.geometry.attributes.position;
+                        const ePosAttr = data.elecTrailMesh.geometry.attributes.position;
+                        
+                        let count = 0;
+                        for(let i=0; i < data.tCount; i++) {
+                            const rIdx = (data.tIdx - data.tCount + i + TRAIL_LENGTH) % TRAIL_LENGTH;
+                            iPosAttr.setXYZ(i, data.iPos[rIdx*3], data.iPos[rIdx*3+1], data.iPos[rIdx*3+2]);
+                            if(ex !== null) ePosAttr.setXYZ(i, data.ePos[rIdx*3], data.ePos[rIdx*3+1], data.ePos[rIdx*3+2]);
+                            count++;
+                        }
+                        
+                        data.ionTrailMesh.geometry.setDrawRange(0, count);
+                        iPosAttr.needsUpdate = true;
+                        
+                        if (ex !== null) {
+                            data.elecTrailMesh.geometry.setDrawRange(0, count);
+                            ePosAttr.needsUpdate = true;
+                        }
+                    } else { 
+                        data.ionTrailMesh.visible = false; 
+                        data.elecTrailMesh.visible = false; 
+                    }
+                };
+
+                let animFrameId;
+                const tempVec = new THREE.Vector3();
+                const camTarget = new THREE.Vector3(15, -2, 0);
+
+                const animate = (timestamp) => {
+                    animFrameId = requestAnimationFrame(animate);
+                    const params = simParams.current;
+                    const gColor = GAS_CONFIG[params.gasType] || GAS_CONFIG.Argon;
+                    const dt = params.simSpeed; 
+                    const massFactor = Math.sqrt(40 / gColor.mass); // Heavier mass -> slower acceleration
+
+                    if (cutawayChamberRef.current) {
+                        const isInside = params.showInsideView;
+                        cutawayChamberRef.current.visible = isInside;
+                        fullGlassChamberRef.current.visible = isInside;
+                        fullSolidChamberRef.current.visible = !isInside;
+                        
+                        cutawayNozzleRef.current.visible = isInside;
+                        fullGlassNozzleRef.current.visible = isInside;
+                        fullSolidNozzleRef.current.visible = !isInside;
+                    }
+
+                    if (tourStateRef.current.active) {
+                        const elapsed = (performance.now() - tourStateRef.current.startTime) / 1000;
+                        let currentStep = TOUR_STEPS[0]; let nextStep = TOUR_STEPS[1];
+                        for (let i = 0; i < TOUR_STEPS.length - 1; i++) {
+                            if (elapsed >= TOUR_STEPS[i].t && elapsed < TOUR_STEPS[i+1].t) { currentStep = TOUR_STEPS[i]; nextStep = TOUR_STEPS[i+1]; break; }
+                        }
+                        if (currentStep.end) { handleReset(); } else {
+                            const progress = (elapsed - currentStep.t) / (nextStep.t - currentStep.t);
+                            const ease = progress < 0.5 ? 2 * progress * progress : -1 + (4 - 2 * progress) * progress; 
+                            camera.position.lerpVectors(new THREE.Vector3(...currentStep.cam), new THREE.Vector3(...nextStep.cam), ease);
+                            camTarget.lerpVectors(new THREE.Vector3(...currentStep.tg), new THREE.Vector3(...nextStep.tg), ease);
+                            controls.target.copy(camTarget);
+                            if (currentStep.msg !== tourMessage) setTourMessage(currentStep.msg);
+                            if (currentStep.mode && currentStep.mode !== simMode) {
+                                setSimMode(currentStep.mode); setMoleculeCount(currentStep.mode === 'focus' ? 3 : 35); setShowTrajectories(currentStep.mode === 'focus');
+                            }
+                            if (currentStep.hp !== undefined) setHeliconPower(currentStep.hp);
+                            if (currentStep.ip !== undefined) setIcrhPower(currentStep.ip);
+                            if (currentStep.speed !== undefined) setSimSpeed(currentStep.speed);
+                        }
+                    }
+
+                    controls.update();
+                    fieldLinesGroup.visible = params.showFieldLines;
+                    const currentMagState = `${params.hMag1}-${params.hMag2}-${params.icrhMag1}-${params.icrhMag2}-${params.nozzleField}`;
+                    if (currentMagState !== lastFieldBuildState && params.showFieldLines) { buildFieldLines(); lastFieldBuildState = currentMagState; }
+
+                    if(coilsRef.current[0]) coilsRef.current[0].material.emissiveIntensity = params.hMag1 / 800;
+                    if(coilsRef.current[1]) coilsRef.current[1].material.emissiveIntensity = params.hMag2 / 800;
+                    if(coilsRef.current[2]) coilsRef.current[2].material.emissiveIntensity = params.icrhMag1 / 800;
+                    if(coilsRef.current[3]) coilsRef.current[3].material.emissiveIntensity = params.icrhMag2 / 800;
+
+                    if (params.isPlaying) {
+                        let activeIonCount = 0, activeNeutralCount = 0;
+                        let maxExhaustVx = 0; // Captures physical simulation max speed
+                        
+                        const particles = particlesRef.current;
+                        
+                        if (particles.length !== params.moleculeCount) syncParticlesWithCount(params.moleculeCount, gColor);
+
+                        particles.forEach((pObj) => {
+                            const data = pObj.userData; let { x, y, z } = pObj.position;
+                            const m = pObj.children[0];
+
+                            if (data.type === 0) {
+                                m.material.color.setHex(gColor.n); m.material.emissive.setHex(gColor.nEm);
+                            } else {
+                                m.material.color.setHex(gColor.i); m.material.emissive.setHex(gColor.iEm);
+                                data.ionTrailMesh.material.color.setHex(gColor.i);
+                            }
+
+                            if (data.type === 0 && x >= 1.0 && x <= 12.0) {
+                                if (Math.random() < params.heliconPower * 0.015 * dt) {
+                                    data.type = 1; 
+                                    m.geometry = sharedIonGeo;
+                                    m.material.color.setHex(gColor.i); m.material.emissive.setHex(gColor.iEm); m.material.emissiveIntensity = 0.9; 
+                                    if (!data.electronMesh) { const eMesh = new THREE.Mesh(sharedElecGeo, sharedElecMat); pObj.add(eMesh); data.electronMesh = eMesh; }
+                                }
+                            }
+
+                            if (data.type === 1) {
+                                activeIonCount++;
+                                if (x >= 16.0 && x <= 28.0) {
+                                    // Mass factor applied: Heavier ions expand gyro radius slower
+                                    data.gyroRadius = Math.min(2.8, data.gyroRadius + params.icrhPower * 0.008 * dt * massFactor);
+                                    data.gyroSpeed = Math.min(0.45, data.gyroSpeed + params.icrhPower * 0.003 * dt * massFactor);
+                                }
+                                const localB = (params.hMag1 + params.hMag2 + params.icrhMag1 + params.icrhMag2) / 4;
+                                data.phase += data.gyroSpeed * dt; 
+                                const effR = data.gyroRadius * (500 / localB);
+                                y += (effR * Math.cos(data.phase) - y) * 0.2 * dt; 
+                                z += (effR * Math.sin(data.phase) - z) * 0.2 * dt;
+
+                                if (data.electronMesh) { const eAngle = data.phase * 4.0; data.electronMesh.position.set(0.6 * Math.sin(eAngle), 0.8 * Math.cos(eAngle), 0.8 * Math.sin(eAngle)); }
+                                
+                                if (x >= 28.0) {
+                                    // Axial acceleration via magnetic nozzle (scaled by mass)
+                                    data.vx += ((data.gyroRadius * 0.02) + (params.nozzleField * 0.00012)) * dt * massFactor;
+                                    const f = (x - 28.0) * 0.025 * dt; y += Math.sign(y) * f; z += Math.sign(z) * f;
+                                }
+                                maxExhaustVx = Math.max(maxExhaustVx, data.vx); 
+                            } else { activeNeutralCount++; y += data.vy * dt; z += data.vz * dt; }
+                            
+                            x += data.vx * dt; 
+                            pObj.position.set(x, y, z);
+
+                            let ex = null, ey = null, ez = null;
+                            if (data.electronMesh) { data.electronMesh.getWorldPosition(tempVec); ex=tempVec.x; ey=tempVec.y; ez=tempVec.z; }
+                            
+                            updateTrail(data, x, y, z, ex, ey, ez, params.showTrajectories && params.showInsideView);
+
+                            if (x > 45 || Math.abs(y) > 12 || Math.abs(z) > 12) {
+                                x = -3.0 + (Math.random() - 0.5) * 1.5; y = -1.0 + (Math.random() - 0.5) * 2.0; z = (Math.random() - 0.5) * 2.0;
+                                data.type = 0; data.vx = (0.08 + Math.random() * 0.04) * massFactor; data.gyroRadius = 0.2 + Math.random() * 0.1; 
+                                
+                                data.tCount = 0; data.tIdx = 0;
+                                data.ionTrailMesh.geometry.setDrawRange(0, 0);
+                                data.elecTrailMesh.geometry.setDrawRange(0, 0);
+
+                                m.geometry = sharedNeutralGeo;
+                                m.material.color.setHex(gColor.n); m.material.emissive.setHex(gColor.nEm); m.material.emissiveIntensity = 0.3; 
+                                if (data.electronMesh) { pObj.remove(data.electronMesh); data.electronMesh = null; }
+                            }
+                        });
+
+                        heliconLight.intensity = params.heliconPower * 0.8 + 0.5; heliconLight.color.setHex(gColor.i);
+                        icrhLight.intensity = params.icrhPower * 0.9 + 0.5; icrhLight.color.setHex(gColor.i);
+                        nozzleLight.intensity = (params.nozzleField / 400) * 1.5; nozzleLight.color.setHex(gColor.i);
+
+                        // Telemetry Calculations
+                        if (Math.random() < 0.2 && !isTourActive) {
+                            // Calculate accurate real-world mappings
+                            let finalExhaustVel = Math.round(maxExhaustVx * gColor.velMult);
+                            let finalIsp = Math.round(finalExhaustVel * 101.9); // Isp = Ve / g0 (where g0 is 9.81 m/s^2)
+                            
+                            setTelemetry({ 
+                                activeIons: activeIonCount, 
+                                activeNeutrals: activeNeutralCount, 
+                                exhaustVel: finalExhaustVel || 0, 
+                                isp: finalIsp || 0
+                            });
+                        }
+                    }
+
+                    if (cameraRef.current && !tourStateRef.current.active) {
+                        const dynamicLabels = LABELS_CONFIG.map(l => ({...l})); 
+                        dynamicLabels[0].text = `Gas Source (${params.gasType})`; 
+
+                        setScreenLabels(dynamicLabels.map((lbl) => {
+                            const vec = new THREE.Vector3(...lbl.pos).project(cameraRef.current);
+                            return { ...lbl, x: (vec.x * 0.5 + 0.5) * window.innerWidth, y: (-(vec.y * 0.5) + 0.5) * window.innerHeight, isVisible: vec.z < 1.0 };
+                        }));
+
+                        if (params.showMeasurements) {
+                            setScreenMeasurements(IPR_MEASUREMENTS.map((lbl) => {
+                                const vec = new THREE.Vector3(...lbl.pos).project(cameraRef.current);
+                                return { ...lbl, x: (vec.x * 0.5 + 0.5) * window.innerWidth, y: (-(vec.y * 0.5) + 0.5) * window.innerHeight, isVisible: vec.z < 1.0 };
+                            }));
+                        } else {
+                            setScreenMeasurements([]);
+                        }
+                    } else if (tourStateRef.current.active) {
+                        setScreenLabels([]); setScreenMeasurements([]);
+                    }
+                    
+                    renderer.render(scene, camera);
+                };
+                animate(0);
+
+                const handleResize = () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); };
+                window.addEventListener('resize', handleResize);
+                return () => { cancelAnimationFrame(animFrameId); window.removeEventListener('resize', handleResize); mount.removeChild(renderer.domElement); scene.clear(); };
+            }, []);
+
+            const getGasTailwindColor = (type) => {
+                if(type === 'Argon') return 'bg-pink-500';
+                if(type === 'Xenon') return 'bg-cyan-400';
+                if(type === 'Krypton') return 'bg-purple-500';
+                return 'bg-pink-500';
+            };
+
+            return (
+                <div className="w-full h-screen relative overflow-hidden select-none">
+                    <div id="three-canvas-container" ref={mountRef}></div>
+
+                    {/* Cinematic Tour Overlays */}
+                    <div className={`cinematic-bar top ${isTourActive ? 'active' : ''}`}></div>
+                    <div className={`cinematic-bar bottom ${isTourActive ? 'active' : ''}`}>
+                        <p className="text-white text-xl md:text-2xl font-light tracking-wide text-center px-4 animate-pulse">{tourMessage}</p>
+                        <button onClick={handleReset} className="absolute right-6 px-4 py-1.5 border border-white/30 text-white/70 hover:text-white hover:border-white rounded text-sm transition">Skip Tour</button>
+                    </div>
+
+                    {/* UI Layers */}
+                    <div className={`transition-opacity duration-1000 ${isTourActive ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+                        {/* Telemetry Header */}
+                        <div className="absolute top-4 left-4 z-10 pointer-events-none">
+                            <div className="flex items-center space-x-3">
+                                <div className="w-3 h-3 rounded-full bg-cyan-400 animate-pulse"></div>
+                                <h1 className="text-2xl font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-purple-400 to-pink-500">
+                                    2-STAGE HELICON THRUSTER
+                                </h1>
+                            </div>
+                            <p className="text-xs text-slate-400 mt-1 font-mono">Electrodeless Plasma Engine Simulation</p>
+                            <div className="flex flex-wrap gap-2 mt-3 pointer-events-auto">
+                                <div className="glass-badge px-3 py-1.5 rounded-lg flex items-center space-x-2"><span className="text-[11px] font-mono text-slate-300">Neutrals: <strong className="text-cyan-300">{telemetry.activeNeutrals}</strong></span></div>
+                                <div className="glass-badge px-3 py-1.5 rounded-lg flex items-center space-x-2"><span className="text-[11px] font-mono text-slate-300">Ions (+): <strong className={`text-white ${getGasTailwindColor(gasType)} px-1 rounded`}>{telemetry.activeIons}</strong></span></div>
+                                <div className="glass-badge px-3 py-1.5 rounded-lg flex items-center space-x-2"><span className="text-[11px] font-mono text-slate-300">Exhaust Vel: <strong className="text-purple-300">{telemetry.exhaustVel} km/s</strong></span></div>
+                                <div className="glass-badge px-3 py-1.5 rounded-lg flex items-center space-x-2"><span className="text-[11px] font-mono text-slate-300">Spec Impulse (Isp): <strong className="text-amber-300">{telemetry.isp} s</strong></span></div>
+                            </div>
+                        </div>
+
+                        {/* Interactive Particle Legend */}
+                        <div className="absolute bottom-4 left-4 z-10 glass-panel p-3 rounded-xl pointer-events-none border border-slate-700/50">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 border-b border-slate-700 pb-1">Particle Legend</p>
+                            <div className="space-y-1.5">
+                                <div className="flex items-center space-x-2">
+                                    <div className={`w-2.5 h-2.5 rounded-full ${gasType === 'Xenon' ? 'bg-blue-300 shadow-[0_0_5px_#93c5fd]' : gasType === 'Krypton' ? 'bg-green-300 shadow-[0_0_5px_#86efac]' : 'bg-cyan-500 shadow-[0_0_5px_#06b6d4]'}`}></div>
+                                    <span className="text-[11px] text-slate-300">Neutral {gasType} Atom</span>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                    <div className={`w-2.5 h-2.5 rounded-full ${getGasTailwindColor(gasType)} shadow-[0_0_5px_#fff]`}></div>
+                                    <span className="text-[11px] text-slate-300">Accelerating Ion (+)</span>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-yellow-300"></div>
+                                    <span className="text-[11px] text-slate-300">Fast Electron (-)</span>
+                                </div>
+                                {showTrajectories && (
+                                    <>
+                                        <div className="flex items-center space-x-2 pt-1">
+                                            <div className={`w-3 h-0.5 ${getGasTailwindColor(gasType)}`}></div>
+                                            <span className="text-[11px] text-slate-400">Ion Trajectory Path</span>
+                                        </div>
+                                        <div className="flex items-center space-x-2">
+                                            <div className="w-3 h-0.5 bg-yellow-300/50"></div>
+                                            <span className="text-[11px] text-slate-400">Electron Helical Path</span>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Camera Interaction Hint */}
+                        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
+                            <div className="glass-panel px-4 py-2 rounded-full text-[10px] font-mono text-slate-300 flex items-center space-x-3 opacity-70">
+                                <span><strong className="text-white">Left Click</strong> {dragMode === 'rotate' ? 'Rotate' : 'Pan'}</span>
+                                <span className="w-1 h-1 rounded-full bg-slate-500"></span>
+                                <span><strong className="text-white">Right Click</strong> {dragMode === 'rotate' ? 'Pan' : 'Rotate'}</span>
+                                <span className="w-1 h-1 rounded-full bg-slate-500"></span>
+                                <span><strong className="text-white">Scroll</strong> Zoom</span>
+                            </div>
+                        </div>
+
+                        {/* 3D Component Labels Overlay */}
+                        {showLabels && screenLabels.map((lbl) => (
+                            lbl.isVisible && <div key={lbl.id} className="component-label label-paper px-2.5 py-1 text-[10px]" style={{ left: `${lbl.x}px`, top: `${lbl.y}px` }}>{lbl.text}</div>
+                        ))}
+
+                        {/* IPR Measurements Overlay */}
+                        {showMeasurements && screenMeasurements.map((lbl) => (
+                            lbl.isVisible && <div key={lbl.id} className="component-label measure-paper px-2.5 py-1 text-[11px]" style={{ left: `${lbl.x}px`, top: `${lbl.y}px` }}>{lbl.text}</div>
+                        ))}
+
+                        {/* Collapsible Control Panel */}
+                        <div className={`absolute top-4 right-4 z-20 w-80 glass-panel rounded-2xl shadow-2xl flex flex-col border border-slate-700/60 transition-all duration-300 ease-in-out ${isMenuOpen ? 'max-h-[90vh]' : 'max-h-[46px] overflow-hidden'}`}>
+                            
+                            <div onClick={() => setIsMenuOpen(!isMenuOpen)} className="flex justify-between items-center p-3 bg-slate-900 border-b border-slate-700/60 cursor-pointer hover:bg-slate-800 transition-colors flex-shrink-0">
+                                <span className="text-[11px] font-bold text-slate-300 uppercase tracking-widest flex items-center space-x-2">
+                                    <svg className="w-3.5 h-3.5 text-cyan-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
+                                    <span>Simulation Controls</span>
+                                </span>
+                                <button className="text-slate-400 focus:outline-none">
+                                    <svg className={`w-4 h-4 transform transition-transform duration-300 ${isMenuOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                                </button>
+                            </div>
+
+                            <div className={`flex flex-col flex-1 overflow-hidden transition-opacity duration-300 ${isMenuOpen ? 'opacity-100' : 'opacity-0'}`}>
+                                <div className="flex border-b border-slate-700/60 bg-slate-900/60 p-1 flex-shrink-0">
+                                    <button onClick={() => setActiveTab('controls')} className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all ${activeTab === 'controls' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'text-slate-400'}`}>Power</button>
+                                    <button onClick={() => setActiveTab('magnets')} className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all ${activeTab === 'magnets' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40' : 'text-slate-400'}`}>Magnets</button>
+                                    <button onClick={() => setActiveTab('camera')} className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all ${activeTab === 'camera' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40' : 'text-slate-400'}`}>Views</button>
+                                </div>
+
+                                <div className="p-3.5 space-y-3.5 overflow-y-auto pointer-events-auto flex-1">
+                                    {activeTab === 'controls' && (
+                                        <>
+                                            <div className="bg-slate-800/50 p-2 rounded-xl border border-slate-700/50 space-y-3">
+                                                <div>
+                                                    <p className="text-[10px] font-mono text-slate-400 uppercase tracking-wider text-center mb-1.5">Simulation Mode</p>
+                                                    <div className="flex space-x-1">
+                                                        <button onClick={() => { setSimMode('flow'); setMoleculeCount(35); setShowTrajectories(false); setSimSpeed(1.0); }} className={`flex-1 py-1 text-[10px] font-bold rounded transition ${simMode === 'flow' ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-300'}`}>Flow (Bulk)</button>
+                                                        <button onClick={() => { setSimMode('focus'); setMoleculeCount(3); setShowTrajectories(true); setSimSpeed(0.2); }} className={`flex-1 py-1 text-[10px] font-bold rounded transition ${simMode === 'focus' ? 'bg-pink-600 text-white' : 'bg-slate-700 text-slate-300'}`}>Focus (1-10)</button>
+                                                    </div>
+                                                </div>
+                                                
+                                                <div>
+                                                    <div className="flex justify-between text-[11px] font-semibold"><span className="text-cyan-300">Gas Molecules</span><span className="font-mono text-cyan-200">{moleculeCount}</span></div>
+                                                    <input type="range" min="1" max={simMode === 'flow' ? "100" : "10"} step="1" value={moleculeCount} onChange={(e) => setMoleculeCount(parseInt(e.target.value))} className="w-full h-1.5 bg-slate-800 rounded-lg accent-cyan-400 mt-1"/>
+                                                </div>
+
+                                                <div>
+                                                    <div className="flex justify-between text-[11px] font-semibold"><span className="text-emerald-300">Playback Speed</span><span className="font-mono text-emerald-200">{simSpeed.toFixed(1)}x</span></div>
+                                                    <input type="range" min="0.1" max="2.0" step="0.1" value={simSpeed} onChange={(e) => setSimSpeed(parseFloat(e.target.value))} className="w-full h-1.5 bg-slate-800 rounded-lg accent-emerald-400 mt-1"/>
+                                                </div>
+
+                                                <div>
+                                                    <p className="text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Propellant Gas Selection</p>
+                                                    <select value={gasType} onChange={(e) => setGasType(e.target.value)} className="w-full bg-slate-700 text-[11px] text-white p-1.5 rounded border border-slate-600 outline-none font-bold">
+                                                        <option value="Argon">Argon (~40 amu) - 15-40 km/s</option>
+                                                        <option value="Krypton">Krypton (~84 amu) - 12-25 km/s</option>
+                                                        <option value="Xenon">Xenon (~131 amu) - 10-18 km/s</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+
+                                            <div className="space-y-1 pt-2 border-t border-slate-800">
+                                                <div className="flex justify-between text-[11px] font-semibold"><span className="text-amber-300">Helicon RF Power</span><span className="font-mono text-amber-200">{heliconPower.toFixed(1)} kW</span></div>
+                                                <input type="range" min="0.0" max="5.0" step="0.1" value={heliconPower} onChange={(e) => setHeliconPower(parseFloat(e.target.value))} className="w-full h-1.5 bg-slate-800 rounded-lg accent-amber-400"/>
+                                            </div>
+                                            <div className="space-y-1 pt-2 border-t border-slate-800">
+                                                <div className="flex justify-between text-[11px] font-semibold"><span className="text-orange-300">ICRH RF Power</span><span className="font-mono text-orange-200">{icrhPower.toFixed(1)} kW</span></div>
+                                                <input type="range" min="0.0" max="5.0" step="0.1" value={icrhPower} onChange={(e) => setIcrhPower(parseFloat(e.target.value))} className="w-full h-1.5 bg-slate-800 rounded-lg accent-orange-400"/>
+                                            </div>
+                                        </>
+                                    )}
+
+                                    {activeTab === 'magnets' && (
+                                        <div className="space-y-3">
+                                            <div className="space-y-1"><div className="flex justify-between text-[11px]"><span className="text-blue-300">Helicon Mag 1</span><span className="font-mono text-blue-200">{hMag1} G</span></div><input type="range" min="100" max="1000" step="25" value={hMag1} onChange={(e) => setHMag1(parseInt(e.target.value))} className="w-full h-1.5 bg-slate-800 rounded-lg accent-blue-500"/></div>
+                                            <div className="space-y-1"><div className="flex justify-between text-[11px]"><span className="text-blue-300">Helicon Mag 2</span><span className="font-mono text-blue-200">{hMag2} G</span></div><input type="range" min="100" max="1000" step="25" value={hMag2} onChange={(e) => setHMag2(parseInt(e.target.value))} className="w-full h-1.5 bg-slate-800 rounded-lg accent-blue-500"/></div>
+                                            <div className="space-y-1 pt-1 border-t border-slate-800"><div className="flex justify-between text-[11px]"><span className="text-indigo-300">ICRH Mag 1</span><span className="font-mono text-indigo-200">{icrhMag1} G</span></div><input type="range" min="100" max="1000" step="25" value={icrhMag1} onChange={(e) => setIcrhMag1(parseInt(e.target.value))} className="w-full h-1.5 bg-slate-800 rounded-lg accent-indigo-500"/></div>
+                                            <div className="space-y-1"><div className="flex justify-between text-[11px]"><span className="text-indigo-300">ICRH Mag 2</span><span className="font-mono text-indigo-200">{icrhMag2} G</span></div><input type="range" min="100" max="1000" step="25" value={icrhMag2} onChange={(e) => setIcrhMag2(parseInt(e.target.value))} className="w-full h-1.5 bg-slate-800 rounded-lg accent-indigo-500"/></div>
+                                            <div className="space-y-1 pt-1 border-t border-slate-800"><div className="flex justify-between text-[11px]"><span className="text-purple-300">Nozzle Field</span><span className="font-mono text-purple-200">{nozzleField} G</span></div><input type="range" min="100" max="1000" step="25" value={nozzleField} onChange={(e) => setNozzleField(parseInt(e.target.value))} className="w-full h-1.5 bg-slate-800 rounded-lg accent-purple-500"/></div>
+                                        </div>
+                                    )}
+
+                                    {activeTab === 'camera' && (
+                                        <div className="space-y-4">
+                                            {/* Camera Interaction Mode */}
+                                            <div>
+                                                <p className="text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1.5">Left-Click Action</p>
+                                                <div className="flex space-x-1">
+                                                    <button onClick={() => setDragMode('rotate')} className={`flex-1 py-1 text-[10px] font-bold rounded transition ${dragMode === 'rotate' ? 'bg-indigo-500 text-white' : 'bg-slate-700 text-slate-300'}`}>Rotate</button>
+                                                    <button onClick={() => setDragMode('pan')} className={`flex-1 py-1 text-[10px] font-bold rounded transition ${dragMode === 'pan' ? 'bg-indigo-500 text-white' : 'bg-slate-700 text-slate-300'}`}>Drag (Pan)</button>
+                                                </div>
+                                            </div>
+
+                                            {/* Quick Focus Targets */}
+                                            <div className="pt-2 border-t border-slate-800">
+                                                <p className="text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1.5">Quick Focus Center</p>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <button onClick={() => setCameraView('intake')} className="py-1 text-[10px] font-bold rounded bg-slate-700 hover:bg-slate-600 text-slate-300 transition">Gas Intake</button>
+                                                    <button onClick={() => setCameraView('stage1')} className="py-1 text-[10px] font-bold rounded bg-slate-700 hover:bg-slate-600 text-slate-300 transition">Stage 1 Helicon</button>
+                                                    <button onClick={() => setCameraView('stage2')} className="py-1 text-[10px] font-bold rounded bg-slate-700 hover:bg-slate-600 text-slate-300 transition">Stage 2 ICRH</button>
+                                                    <button onClick={() => setCameraView('nozzle')} className="py-1 text-[10px] font-bold rounded bg-slate-700 hover:bg-slate-600 text-slate-300 transition">Expansion Nozzle</button>
+                                                    <button onClick={() => setCameraView('full')} className="col-span-2 py-1 text-[10px] font-bold rounded bg-slate-800 border border-slate-600 hover:bg-slate-700 text-slate-300 transition">Full Overview</button>
+                                                </div>
+                                            </div>
+
+                                            <div className="pt-2 border-t border-slate-800 space-y-2.5">
+                                                <p className="text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1.5">Visual Toggles</p>
+                                                <label className="flex items-center space-x-2.5 cursor-pointer"><input type="checkbox" checked={showInsideView} onChange={(e) => setShowInsideView(e.target.checked)} className="w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-cyan-500"/><span className="text-[11px] text-slate-300 font-medium">Inside View (Cutaway)</span></label>
+                                                <label className="flex items-center space-x-2.5 cursor-pointer"><input type="checkbox" checked={showFieldLines} onChange={(e) => setShowFieldLines(e.target.checked)} className="w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-cyan-500"/><span className="text-[11px] text-slate-300 font-medium">Show Magnetic Fields</span></label>
+                                                <label className="flex items-center space-x-2.5 cursor-pointer"><input type="checkbox" checked={showTrajectories} onChange={(e) => setShowTrajectories(e.target.checked)} className="w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-pink-500"/><span className="text-[11px] text-slate-300 font-medium">Show Trajectories (Trails)</span></label>
+                                                <label className="flex items-center space-x-2.5 cursor-pointer"><input type="checkbox" checked={showLabels} onChange={(e) => setShowLabels(e.target.checked)} className="w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-cyan-500"/><span className="text-[11px] text-slate-300 font-medium">Show Component Labels</span></label>
+                                                <label className="flex items-center space-x-2.5 cursor-pointer"><input type="checkbox" checked={showMeasurements} onChange={(e) => setShowMeasurements(e.target.checked)} className="w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-yellow-500"/><span className="text-[11px] text-slate-300 font-medium">Show IPR Dimensions</span></label>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Action Buttons */}
+                                <div className="p-3 border-t border-slate-700/60 bg-slate-900/80 flex-shrink-0 space-y-2">
+                                    <button onClick={startTour} className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition shadow-lg shadow-indigo-900/50 flex justify-center items-center space-x-2">
+                                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                                        <span>Play Guided Tour</span>
+                                    </button>
+                                    
+                                    <div className="flex space-x-2">
+                                        <button onClick={toggleRecording} className={`flex-1 py-1.5 border rounded-lg text-xs font-bold transition flex justify-center items-center space-x-1 ${isRecording ? 'bg-red-500/20 text-red-400 border-red-500/50 animate-pulse' : 'bg-slate-800 text-slate-300 border-slate-600 hover:bg-slate-700'}`}>
+                                            <span className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500' : 'bg-slate-400'}`}></span>
+                                            <span>{isRecording ? 'Stop & Save Video' : 'Record Video'}</span>
+                                        </button>
+                                        
+                                        <button onClick={handleReset} className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-600 rounded-lg text-xs font-bold transition" title="Reset Simulator">
+                                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
