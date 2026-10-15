@@ -2,7 +2,7 @@
 
 > **BANARAS HINDU UNIVERSITY (BHU), VARANASI**  
 > *Advanced Space Physics & Electrodeless Plasma Propulsion Visualization*  
-> **Created & Curated by [@ConciseCoder](https://github.com/ConciseCoder)**
+> **Created & Curated by [@Concise-Coder](https://github.com/Concise-Coder)**
 
 ---
 
@@ -13,7 +13,7 @@
 Built on operational physics models from the **Institute for Plasma Research (IPR), India** and advanced VASIMR/Helicon propulsion architectures, this simulator breaks down complex plasma dynamics into intuitive visual stages.
 
 ### 🔗 Live Demo
-👉 **[Launch Interactive Simulator](https://ConciseCoder.github.io/plasma-thruster-simulator/)** *(Enable GitHub Pages to activate)*
+👉 **[Launch Interactive Simulator](https://Concise-Coder.github.io/plasma-thruster-simulator/)** *(Enable GitHub Pages to activate)*
 
 ---
 
@@ -44,7 +44,7 @@ No `npm install` or build step is required!
 1. Clone this repository:
    
 ```bash
-   git clone [https://github.com/ConciseCoder/plasma-thruster-simulator.git](https://github.com/ConciseCoder/plasma-thruster-simulator.git)
+   git clone [https://github.com/Concise-Coder/plasma-thruster-simulator.git](https://github.com/Concise-Coder/plasma-thruster-simulator.git)
    
 ```
 2. Open `index.html` directly in any modern web browser (Chrome, Edge, Firefox, Safari) or use the **VS Code Live Server** extension.
@@ -64,5 +64,5 @@ No `npm install` or build step is required!
 
 ## ©️ Copyright & License
 
-**Copyright © [@ConciseCoder](https://github.com/ConciseCoder) | Banaras Hindu University (BHU), Varanasi.**  
+**Copyright © [@Concise-Coder](https://github.com/Concise-Coder) | Banaras Hindu University (BHU), Varanasi.**  
 All Rights Reserved. For academic, educational, or research inquiries, please credit `@ConciseCoder` and cite the primary scientific sources listed above.
